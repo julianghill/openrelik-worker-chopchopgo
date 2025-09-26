@@ -7,9 +7,25 @@ RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selectio
 
 # Install poetry and any other dependency that your worker needs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     curl \
-    # Add your dependencies here
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+ARG CHOPCHOPGO_VERSION=v1.0.0-release-1
+ENV CHOPCHOPGO_VERSION=${CHOPCHOPGO_VERSION}
+
+RUN curl -sSL -o /tmp/chopchopgo.zip \
+        "https://github.com/M00NLIG7/ChopChopGo/releases/download/${CHOPCHOPGO_VERSION}/${CHOPCHOPGO_VERSION}.zip" \
+    && unzip /tmp/chopchopgo.zip -d /tmp/chopchopgo \
+    && install -Dm755 /tmp/chopchopgo/ChopChopGo/ChopChopGo /usr/local/bin/chopchopgo \
+    && mkdir -p /opt/chopchopgo \
+    && cp -r /tmp/chopchopgo/ChopChopGo/rules /opt/chopchopgo/rules \
+    && cp -r /tmp/chopchopgo/ChopChopGo/maps /opt/chopchopgo/maps \
+    && rm -rf /tmp/chopchopgo /tmp/chopchopgo.zip
+
+ENV CHOPCHOPGO_BINARY=/usr/local/bin/chopchopgo \
+    CHOPCHOPGO_RULES_DIR=/opt/chopchopgo/rules
 
 # Configure debugging
 ARG OPENRELIK_PYDEBUG
@@ -39,4 +55,4 @@ RUN uv sync --locked --no-dev
 ENV PATH="/openrelik/.venv/bin:$PATH"
 
 # Default command if not run from docker-compose (and command being overidden)
-CMD ["celery", "--app=src.tasks", "worker", "--task-events", "--concurrency=1", "--loglevel=DEBUG"]
+CMD ["celery", "--app=src.app", "worker", "--task-events", "--concurrency=1", "--loglevel=INFO", "-Q", "openrelik-worker-chopchopgo"]

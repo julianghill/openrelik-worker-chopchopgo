@@ -2,11 +2,11 @@
 publish: false
 
 # Worker Metadata. This section is required.
-display_name: User-friendly name of your worker
-description: Brief description of your workers purpose and functionality.
+display_name: ChopChopGo Linux Log Analyzer
+description: Run ChopChopGo against Linux log artefacts and export detections as JSON or CSV.
 
 # Optional: Third-Party Tools Used by the Worker.
 tools:
-  - display_name: User-friendly name of the tool
-    description: Brief description of the tool
-    url: http://example.com # URL for more info about the tool
+  - display_name: ChopChopGo
+    description: Fast Sigma-based hunting utility for Linux forensic artefacts.
+    url: https://github.com/M00NLIG7/ChopChopGo
