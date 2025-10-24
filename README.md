@@ -9,7 +9,7 @@ input file.
 ## What you can run from the OpenRelik UI
 
 - **ChopChopGo log analysis (`analyze_logs`)** – supply one or more text-based Linux logs
-  (for example `syslog`, exported `journald`, `auditd` traces). The worker chooses the
+  (for example `syslog` or `auditd` traces). The worker chooses the
   appropriate rule directory, runs ChopChopGo once per file, and stores the findings in
   the requested format.
 - **Rule overrides** – advanced users can point the task at a custom rules directory
@@ -23,9 +23,10 @@ lightweight while still supporting bespoke hunts.
 
 | Field | Description |
 | --- | --- |
-| `output_format` | Optional. Accepts `json` or `csv`; defaults to `json`. Invalid values fall back safely to `json`. |
-| `target` | Optional. Passed through to ChopChopGo's `-target` flag (`syslog`, `auditd`, `journald`, …). Empty values revert to `syslog`. |
-| `rules_path` | Optional. Absolute path to a rules directory inside the container. When omitted, the worker uses `/opt/chopchopgo/rules/linux/builtin` which covers the upstream builtin Sigma detections. |
+| `output_format` | Autocomplete selector exposed as `json` or `csv`. Defaults to `json` when left blank. |
+| `target` | Autocomplete selector for the ChopChopGo parser (`syslog` or `auditd`). Empty/unknown choices fall back to `syslog`. |
+| `rule_bundle` | Optional autocomplete selector that lists the packaged Sigma directories (`linux/builtin`, `linux/auditd`, `linux/process_creation`, …). When omitted, the worker auto-selects a bundle that matches the target. |
+| `rules_path` | Advanced text field that overrides the bundle with a custom directory you mounted into the container. |
 
 ## Deployment
 
@@ -84,5 +85,4 @@ Remove the Syslog" Sigma rule—handy for smoke testing the pipeline end-to-end.
 
 ## Credits
 
-Credit for ChopChopGo goes to the Keyboard Cowboys / M00NL1G7 team. This worker merely
-packages the tool for OpenRelik automation.
+Credit for ChopChopGo goes to M00NL1G7. This worker merely packages the tool for OpenRelik automation.

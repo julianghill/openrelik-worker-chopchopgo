@@ -19,16 +19,21 @@ from .app import celery
 WORKER_NAME = "openrelik-worker-chopchopgo"
 TASK_NAME = f"{WORKER_NAME}.tasks.analyze_logs"
 SUPPORTED_FORMATS = {"json", "csv"}
+SUPPORTED_TARGETS = ["syslog", "auditd"]
 DEFAULT_TARGET = os.getenv("CHOPCHOPGO_DEFAULT_TARGET", "syslog")
-DEFAULT_RULES_ROOT = os.getenv(
-    "CHOPCHOPGO_RULES_DIR", "/opt/chopchopgo/rules"
-)
+DEFAULT_RULES_ROOT = os.getenv("CHOPCHOPGO_RULES_DIR", "/opt/chopchopgo/rules")
 BINARY_PATH = os.getenv("CHOPCHOPGO_BINARY", "chopchopgo")
 
 TARGET_RULE_SUBPATHS = {
     "syslog": Path("linux") / "builtin",
-    "journald": Path("linux") / "builtin",
     "auditd": Path("linux") / "auditd",
+}
+RULE_BUNDLE_SUBPATHS = {
+    "linux/builtin": Path("linux") / "builtin",
+    "linux/auditd": Path("linux") / "auditd",
+    "linux/process_creation": Path("linux") / "process_creation",
+    "linux/file_event": Path("linux") / "file_event",
+    "linux/network_connection": Path("linux") / "network_connection",
 }
 
 TASK_METADATA = {
@@ -37,26 +42,36 @@ TASK_METADATA = {
     "task_config": [
         {
             "name": "output_format",
-            "label": "Output format (json/csv)",
-            "description": "Select the desired output format. Defaults to json if left empty.",
-            "type": "text",
+            "label": "Output format",
+            "description": "Select JSON or CSV. If omitted, JSON is used.",
+            "type": "autocomplete",
+            "items": sorted(SUPPORTED_FORMATS),
             "required": False,
         },
         {
             "name": "target",
             "label": "ChopChopGo target",
+            "description": "Which ChopChopGo parser to use (syslog or auditd).",
+            "type": "autocomplete",
+            "items": SUPPORTED_TARGETS,
+            "required": False,
+        },
+        {
+            "name": "rule_bundle",
+            "label": "Bundled rule directory",
             "description": (
-                "Optional target passed to ChopChopGo (-target). Defaults to syslog."
+                "Select one of the packaged rule directories shipped with ChopChopGo. "
+                "Leave empty to auto-select a bundle that matches the target."
             ),
-            "type": "text",
+            "type": "autocomplete",
+            "items": sorted(RULE_BUNDLE_SUBPATHS.keys()),
             "required": False,
         },
         {
             "name": "rules_path",
-            "label": "Rules directory",
+            "label": "Custom rules directory (advanced)",
             "description": (
-                "Custom rules directory to pass with -rules."
-                " Defaults to built-in rules for the chosen target."
+                "Override the rule bundle path with a custom directory mounted inside the container."
             ),
             "type": "text",
             "required": False,
@@ -74,8 +89,14 @@ log_root = Logger()
 logger = log_root.get_logger(__name__, get_task_logger(__name__))
 
 
+def _first_value(value):
+    if isinstance(value, list):
+        return value[0] if value else None
+    return value
+
+
 def _determine_output_format(task_config: Optional[Dict[str, str]]) -> str:
-    raw_value = (task_config or {}).get("output_format")
+    raw_value = _first_value((task_config or {}).get("output_format"))
     if raw_value is None:
         return "json"
 
@@ -91,18 +112,39 @@ def _determine_output_format(task_config: Optional[Dict[str, str]]) -> str:
 
 
 def _determine_target(task_config: Optional[Dict[str, str]]) -> str:
-    raw_value = (task_config or {}).get("target")
+    raw_value = _first_value((task_config or {}).get("target"))
     if raw_value is None:
         return DEFAULT_TARGET
 
     target_candidate = str(raw_value).strip()
-    return target_candidate or DEFAULT_TARGET
+    if not target_candidate:
+        return DEFAULT_TARGET
+
+    if target_candidate not in SUPPORTED_TARGETS:
+        logger.warning(
+            "Unsupported target '%s'. Falling back to %s.", target_candidate, DEFAULT_TARGET
+        )
+        return DEFAULT_TARGET
+
+    return target_candidate
 
 
-def _resolve_rules_path(target: str, rules_override: Optional[str]) -> Optional[str]:
+def _resolve_rules_path(
+    target: str,
+    rules_override: Optional[str],
+    bundle_choice: Optional[str],
+) -> Optional[str]:
     if rules_override:
         override_path = Path(rules_override)
         return str(override_path) if override_path.is_dir() else None
+
+    bundle_key = _first_value(bundle_choice)
+    if bundle_key:
+        subpath = RULE_BUNDLE_SUBPATHS.get(bundle_key)
+        if subpath:
+            candidate = Path(DEFAULT_RULES_ROOT) / subpath
+            if candidate.is_dir():
+                return str(candidate)
 
     default_subpath = TARGET_RULE_SUBPATHS.get(target, Path("linux") / "builtin")
     candidate = Path(DEFAULT_RULES_ROOT) / default_subpath
@@ -137,11 +179,15 @@ def analyze_logs(
 
     output_format = _determine_output_format(task_config)
     target = _determine_target(task_config)
-    rules_path = _resolve_rules_path(target, (task_config or {}).get("rules_path"))
+    rules_path = _resolve_rules_path(
+        target,
+        (task_config or {}).get("rules_path"),
+        (task_config or {}).get("rule_bundle"),
+    )
 
     if not rules_path:
         raise RuntimeError(
-            "Unable to locate rules directory. Provide 'rules_path' in task configuration."
+            "Unable to locate rules directory. Select a bundled rule directory or provide 'rules_path'."
         )
 
     output_files = []
@@ -186,9 +232,16 @@ def analyze_logs(
         )
 
         if result.returncode != 0:
-            logger.error(
-                "ChopChopGo failed for %s: %s", file_path, result.stderr or result.stdout
-            )
+            error_output = result.stderr or result.stdout or ""
+            logger.error("ChopChopGo failed for %s: %s", file_path, error_output)
+
+            if "Failed to match timestamp" in error_output:
+                raise RuntimeError(
+                    "ChopChopGo could not parse the input log format. "
+                    "Verify the selected target (currently '%s') matches the log type "
+                    "or supply a compatible ruleset." % target
+                )
+
             raise RuntimeError(
                 f"ChopChopGo exited with code {result.returncode} while processing {display_name}"
             )
@@ -212,7 +265,9 @@ def analyze_logs(
     if not output_files:
         raise RuntimeError("ChopChopGo did not produce any outputs")
 
-    logger.info("ChopChopGo analysis completed: %d file(s) processed", len(output_files))
+    logger.info(
+        "ChopChopGo analysis completed: %d file(s) processed", len(output_files)
+    )
 
     return create_task_result(
         output_files=output_files,
